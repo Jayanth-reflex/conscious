@@ -1,180 +1,298 @@
-// Background Script for Time Tracking
+// Background Service Worker for conscious extension
 import { openDB } from 'idb-keyval';
 import { v4 as uuidv4 } from 'uuid';
 
-// IndexedDB setup
+// Database setup
 let db;
+const DB_NAME = 'consciousDB';
+const DB_VERSION = 1;
 
 const initDB = async () => {
-  db = await openDB('consciousMediaDB', 1, {
+  db = await openDB(DB_NAME, DB_VERSION, {
     upgrade(db) {
-      // Create time_logs object store
-      const timeLogsStore = db.createObjectStore('time_logs', { keyPath: 'id' });
-      timeLogsStore.createIndex('domain', 'domain');
-      timeLogsStore.createIndex('category', 'category');
-      timeLogsStore.createIndex('startTs', 'startTs');
+      // Sessions store
+      const sessionsStore = db.createObjectStore('sessions', { keyPath: 'sessionId' });
+      sessionsStore.createIndex('domain', 'domain');
+      sessionsStore.createIndex('date', 'date');
+      sessionsStore.createIndex('startTime', 'startTime');
 
-      // Create settings object store
-      db.createObjectStore('settings', { keyPath: 'key' });
-
-      // Create bias_cache object store
-      const biasCacheStore = db.createObjectStore('bias_cache', { keyPath: 'domain' });
-      biasCacheStore.createIndex('lastFetched', 'lastFetched');
+      // Settings store
+      const settingsStore = db.createObjectStore('settings', { keyPath: 'key' });
+      
+      // Initialize default settings
+      const defaultSettings = {
+        whitelist: [
+          'facebook.com', 'twitter.com', 'instagram.com', 'youtube.com', 
+          'reddit.com', 'linkedin.com', 'tiktok.com', 'snapchat.com',
+          'discord.com', 'twitch.tv'
+        ],
+        sessionLimit: 1800, // 30 minutes in seconds
+        remindersEnabled: true,
+        idleTimeout: 300, // 5 minutes in seconds
+        lastExportDate: null,
+        darkTheme: true,
+        animationsEnabled: true
+      };
+      
+      Object.entries(defaultSettings).forEach(([key, value]) => {
+        settingsStore.put({ key, value });
+      });
     },
   });
 };
 
-// Domain categorization mapping
-const domainCategories = {
-  'facebook.com': 'social',
-  'twitter.com': 'social',
-  'instagram.com': 'social',
-  'linkedin.com': 'social',
-  'reddit.com': 'social',
-  'youtube.com': 'entertainment',
-  'netflix.com': 'entertainment',
-  'cnn.com': 'news',
-  'bbc.com': 'news',
-  'nytimes.com': 'news',
-  'washingtonpost.com': 'news',
-  'gmail.com': 'utility',
-  'google.com': 'utility',
-  'github.com': 'utility',
-  'stackoverflow.com': 'utility',
-};
+// Session tracking state
+let currentSession = null;
+let sessionTimer = null;
+let activityTimer = null;
+let lastActivityTime = Date.now();
+let isUserActive = false;
 
-const categorizeDomain = (domain) => {
-  return domainCategories[domain] || 'other';
-};
+// Default whitelist domains
+const DEFAULT_WHITELIST = [
+  'facebook.com', 'twitter.com', 'instagram.com', 'youtube.com', 
+  'reddit.com', 'linkedin.com', 'tiktok.com', 'snapchat.com',
+  'discord.com', 'twitch.tv'
+];
 
-// Time tracking state
-let currentTimeLog = null;
-let lastActiveTabId = null;
-
-// Initialize database on startup
+// Initialize on startup
 initDB();
 
-// Listen for tab activation
-chrome.tabs.onActivated.addListener(async (activeInfo) => {
-  await handleTabChange(activeInfo.tabId);
-});
-
-// Listen for tab updates (URL changes)
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.active) {
-    await handleTabChange(tabId);
-  }
-});
-
-// Handle tab changes and time logging
-const handleTabChange = async (tabId) => {
-  const now = Date.now();
-  
-  // End current time log if exists
-  if (currentTimeLog) {
-    currentTimeLog.endTs = now;
-    await saveTimeLog(currentTimeLog);
-  }
-
-  // Get current tab info
+// Utility functions
+const getDomainFromUrl = (url) => {
   try {
-    const tab = await chrome.tabs.get(tabId);
-    if (tab.url && !tab.url.startsWith('chrome://')) {
-      const url = new URL(tab.url);
-      const domain = url.hostname;
-      const category = categorizeDomain(domain);
-
-      // Start new time log
-      currentTimeLog = {
-        id: uuidv4(),
-        domain,
-        category,
-        startTs: now,
-        endTs: null,
-      };
-    }
-  } catch (error) {
-    console.error('Error getting tab info:', error);
-    currentTimeLog = null;
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return null;
   }
-
-  lastActiveTabId = tabId;
 };
 
-// Save time log to IndexedDB
-const saveTimeLog = async (timeLog) => {
+const isWhitelistedDomain = async (domain) => {
+  if (!domain) return false;
+  const settings = await getSetting('whitelist');
+  const whitelist = settings || DEFAULT_WHITELIST;
+  return whitelist.some(whitelistedDomain => 
+    domain === whitelistedDomain || domain.endsWith('.' + whitelistedDomain)
+  );
+};
+
+const getSetting = async (key) => {
   if (!db) await initDB();
-  
   try {
-    const tx = db.transaction('time_logs', 'readwrite');
-    await tx.objectStore('time_logs').put(timeLog);
+    const tx = db.transaction('settings', 'readonly');
+    const store = tx.objectStore('settings');
+    const result = await store.get(key);
+    return result?.value;
+  } catch (error) {
+    console.error('Error getting setting:', error);
+    return null;
+  }
+};
+
+const setSetting = async (key, value) => {
+  if (!db) await initDB();
+  try {
+    const tx = db.transaction('settings', 'readwrite');
+    const store = tx.objectStore('settings');
+    await store.put({ key, value });
     await tx.done;
   } catch (error) {
-    console.error('Error saving time log:', error);
+    console.error('Error setting setting:', error);
   }
 };
 
-// Get time logs for a date range
-const getTimeLogs = async (startDate, endDate) => {
+// Session management
+const startSession = async (domain, url) => {
+  if (currentSession) {
+    await endSession();
+  }
+
+  const now = Date.now();
+  currentSession = {
+    sessionId: uuidv4(),
+    domain,
+    url,
+    date: new Date().toISOString().split('T')[0],
+    startTime: now,
+    endTime: null,
+    totalSecs: 0,
+    activeSecs: 0,
+    idleSecs: 0,
+    lastUpdate: now
+  };
+
+  // Start session timer (updates every second)
+  sessionTimer = setInterval(updateSession, 1000);
+  
+  // Start activity monitoring
+  lastActivityTime = now;
+  isUserActive = true;
+  
+  console.log('Session started for:', domain);
+};
+
+const updateSession = () => {
+  if (!currentSession) return;
+
+  const now = Date.now();
+  const elapsed = Math.floor((now - currentSession.lastUpdate) / 1000);
+  
+  currentSession.totalSecs += elapsed;
+  
+  // Check if user is active (activity within last 10 seconds)
+  const timeSinceActivity = now - lastActivityTime;
+  if (timeSinceActivity <= 10000) {
+    currentSession.activeSecs += elapsed;
+    isUserActive = true;
+  } else {
+    currentSession.idleSecs += elapsed;
+    isUserActive = false;
+  }
+  
+  currentSession.lastUpdate = now;
+  
+  // Update popup if open
+  chrome.runtime.sendMessage({
+    type: 'SESSION_UPDATE',
+    session: currentSession,
+    isActive: isUserActive
+  }).catch(() => {}); // Ignore if popup is closed
+  
+  // Check session limits
+  checkSessionLimits();
+};
+
+const endSession = async () => {
+  if (!currentSession || !sessionTimer) return;
+
+  clearInterval(sessionTimer);
+  sessionTimer = null;
+
+  currentSession.endTime = Date.now();
+  
+  // Save session to database
+  await saveSession(currentSession);
+  
+  console.log('Session ended for:', currentSession.domain, 
+    `Total: ${currentSession.totalSecs}s, Active: ${currentSession.activeSecs}s`);
+  
+  currentSession = null;
+};
+
+const saveSession = async (session) => {
   if (!db) await initDB();
   
   try {
-    const tx = db.transaction('time_logs', 'readonly');
-    const store = tx.objectStore('time_logs');
-    const index = store.index('startTs');
-    const range = IDBKeyRange.bound(startDate, endDate);
-    const logs = await index.getAll(range);
-    return logs;
+    const tx = db.transaction('sessions', 'readwrite');
+    const store = tx.objectStore('sessions');
+    await store.put(session);
+    await tx.done;
   } catch (error) {
-    console.error('Error getting time logs:', error);
-    return [];
+    console.error('Error saving session:', error);
   }
 };
 
-// Aggregate time logs by category/domain
-const aggregateTimeLogs = (logs) => {
-  const aggregates = {
-    byCategory: {},
-    byDomain: {},
-    total: 0,
-  };
-
-  logs.forEach(log => {
-    if (log.endTs) {
-      const duration = log.endTs - log.startTs;
-      
-      // Aggregate by category
-      if (!aggregates.byCategory[log.category]) {
-        aggregates.byCategory[log.category] = 0;
-      }
-      aggregates.byCategory[log.category] += duration;
-      
-      // Aggregate by domain
-      if (!aggregates.byDomain[log.domain]) {
-        aggregates.byDomain[log.domain] = 0;
-      }
-      aggregates.byDomain[log.domain] += duration;
-      
-      aggregates.total += duration;
-    }
-  });
-
-  return aggregates;
+// Activity tracking
+const updateActivity = () => {
+  lastActivityTime = Date.now();
 };
 
-// Message handling for popup/dashboard communication
+// Session limit checking
+const checkSessionLimits = async () => {
+  if (!currentSession) return;
+  
+  const sessionLimit = await getSetting('sessionLimit') || 1800; // 30 minutes default
+  const remindersEnabled = await getSetting('remindersEnabled');
+  
+  if (remindersEnabled && currentSession.totalSecs >= sessionLimit) {
+    // Show notification
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icons/icon48.png',
+      title: 'conscious',
+      message: `You've been on ${currentSession.domain} for ${Math.floor(currentSession.totalSecs / 60)} minutes. Consider taking a break!`
+    });
+    
+    // Disable further notifications for this session
+    await setSetting('remindersEnabled', false);
+    setTimeout(async () => {
+      await setSetting('remindersEnabled', true);
+    }, 300000); // Re-enable after 5 minutes
+  }
+};
+
+// Tab event listeners
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+  try {
+    const tab = await chrome.tabs.get(activeInfo.tabId);
+    await handleTabChange(tab);
+  } catch (error) {
+    console.error('Error handling tab activation:', error);
+  }
+});
+
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' && tab.active) {
+    await handleTabChange(tab);
+  }
+});
+
+const handleTabChange = async (tab) => {
+  if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+    await endSession();
+    return;
+  }
+
+  const domain = getDomainFromUrl(tab.url);
+  const isWhitelisted = await isWhitelistedDomain(domain);
+  
+  if (isWhitelisted) {
+    if (!currentSession || currentSession.domain !== domain) {
+      await startSession(domain, tab.url);
+    }
+  } else {
+    await endSession();
+  }
+};
+
+// Message handling
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   switch (request.type) {
-    case 'GET_TODAY_STATS':
-      handleGetTodayStats(sendResponse);
-      return true; // Keep message channel open for async response
+    case 'GET_CURRENT_SESSION':
+      sendResponse({
+        session: currentSession,
+        isActive: isUserActive,
+        lastActivity: lastActivityTime
+      });
+      break;
       
-    case 'GET_WEEKLY_STATS':
-      handleGetWeeklyStats(sendResponse);
+    case 'ACTIVITY_UPDATE':
+      updateActivity();
+      sendResponse({ success: true });
+      break;
+      
+    case 'GET_SESSIONS':
+      handleGetSessions(request, sendResponse);
+      return true; // Keep message channel open
+      
+    case 'GET_SETTINGS':
+      handleGetSettings(sendResponse);
       return true;
       
-    case 'GET_BIAS':
-      handleGetBias(request.domain, sendResponse);
+    case 'UPDATE_SETTINGS':
+      handleUpdateSettings(request, sendResponse);
+      return true;
+      
+    case 'EXPORT_DATA':
+      handleExportData(sendResponse);
+      return true;
+      
+    case 'IMPORT_DATA':
+      handleImportData(request, sendResponse);
+      return true;
+      
+    case 'CLEAR_DATA':
+      handleClearData(request, sendResponse);
       return true;
       
     default:
@@ -182,70 +300,207 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-const handleGetTodayStats = async (sendResponse) => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
+const handleGetSessions = async (request, sendResponse) => {
+  if (!db) await initDB();
   
-  const logs = await getTimeLogs(today.getTime(), tomorrow.getTime());
-  const aggregates = aggregateTimeLogs(logs);
-  
-  sendResponse({ success: true, data: aggregates });
+  try {
+    const { startDate, endDate, domain } = request;
+    const tx = db.transaction('sessions', 'readonly');
+    const store = tx.objectStore('sessions');
+    
+    let sessions = await store.getAll();
+    
+    // Apply filters
+    if (startDate || endDate || domain) {
+      sessions = sessions.filter(session => {
+        if (startDate && session.date < startDate) return false;
+        if (endDate && session.date > endDate) return false;
+        if (domain && session.domain !== domain) return false;
+        return true;
+      });
+    }
+    
+    // Sort by start time (newest first)
+    sessions.sort((a, b) => b.startTime - a.startTime);
+    
+    sendResponse({ success: true, sessions });
+  } catch (error) {
+    console.error('Error getting sessions:', error);
+    sendResponse({ success: false, error: error.message });
+  }
 };
 
-const handleGetWeeklyStats = async (sendResponse) => {
-  const today = new Date();
-  const weekAgo = new Date(today);
-  weekAgo.setDate(weekAgo.getDate() - 7);
-  weekAgo.setHours(0, 0, 0, 0);
+const handleGetSettings = async (sendResponse) => {
+  if (!db) await initDB();
   
-  const logs = await getTimeLogs(weekAgo.getTime(), today.getTime());
-  const aggregates = aggregateTimeLogs(logs);
-  
-  sendResponse({ success: true, data: aggregates });
+  try {
+    const tx = db.transaction('settings', 'readonly');
+    const store = tx.objectStore('settings');
+    const allSettings = await store.getAll();
+    
+    const settings = {};
+    allSettings.forEach(item => {
+      settings[item.key] = item.value;
+    });
+    
+    sendResponse({ success: true, settings });
+  } catch (error) {
+    console.error('Error getting settings:', error);
+    sendResponse({ success: false, error: error.message });
+  }
 };
 
-const handleGetBias = async (domain, sendResponse) => {
-  // This would integrate with MediaBiasFactCheck API
-  // For now, return mock data
-  const mockBiasData = {
-    domain,
-    biasRating: 'center',
-    credibility: 75,
-    lastFetched: Date.now(),
-  };
-  
-  sendResponse({ success: true, data: mockBiasData });
+const handleUpdateSettings = async (request, sendResponse) => {
+  try {
+    const { settings } = request;
+    
+    for (const [key, value] of Object.entries(settings)) {
+      await setSetting(key, value);
+    }
+    
+    sendResponse({ success: true });
+  } catch (error) {
+    console.error('Error updating settings:', error);
+    sendResponse({ success: false, error: error.message });
+  }
 };
 
-// Alarm for periodic checks (nudges, cleanup)
-chrome.alarms.create('periodicCheck', { periodInMinutes: 1 });
+const handleExportData = async (sendResponse) => {
+  if (!db) await initDB();
+  
+  try {
+    const tx = db.transaction(['sessions', 'settings'], 'readonly');
+    const sessionsStore = tx.objectStore('sessions');
+    const settingsStore = tx.objectStore('settings');
+    
+    const sessions = await sessionsStore.getAll();
+    const settingsArray = await settingsStore.getAll();
+    
+    const settings = {};
+    settingsArray.forEach(item => {
+      settings[item.key] = item.value;
+    });
+    
+    const exportData = {
+      version: '1.1.0',
+      exportDate: new Date().toISOString(),
+      sessions,
+      settings
+    };
+    
+    sendResponse({ success: true, data: exportData });
+  } catch (error) {
+    console.error('Error exporting data:', error);
+    sendResponse({ success: false, error: error.message });
+  }
+};
 
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'periodicCheck') {
-    checkNudges();
+const handleImportData = async (request, sendResponse) => {
+  if (!db) await initDB();
+  
+  try {
+    const { data } = request;
+    
+    if (!data.sessions || !data.settings) {
+      throw new Error('Invalid import data format');
+    }
+    
+    const tx = db.transaction(['sessions', 'settings'], 'readwrite');
+    const sessionsStore = tx.objectStore('sessions');
+    const settingsStore = tx.objectStore('settings');
+    
+    // Import sessions (with conflict resolution)
+    for (const session of data.sessions) {
+      const existing = await sessionsStore.get(session.sessionId);
+      if (!existing) {
+        await sessionsStore.put(session);
+      }
+    }
+    
+    // Import settings
+    for (const [key, value] of Object.entries(data.settings)) {
+      await settingsStore.put({ key, value });
+    }
+    
+    await tx.done;
+    
+    sendResponse({ success: true, imported: data.sessions.length });
+  } catch (error) {
+    console.error('Error importing data:', error);
+    sendResponse({ success: false, error: error.message });
+  }
+};
+
+const handleClearData = async (request, sendResponse) => {
+  if (!db) await initDB();
+  
+  try {
+    const { type } = request;
+    
+    if (type === 'sessions' || type === 'all') {
+      const tx = db.transaction('sessions', 'readwrite');
+      const store = tx.objectStore('sessions');
+      await store.clear();
+      await tx.done;
+    }
+    
+    if (type === 'settings' || type === 'all') {
+      // Reset to defaults instead of clearing
+      const defaultSettings = {
+        whitelist: DEFAULT_WHITELIST,
+        sessionLimit: 1800,
+        remindersEnabled: true,
+        idleTimeout: 300,
+        lastExportDate: null,
+        darkTheme: true,
+        animationsEnabled: true
+      };
+      
+      for (const [key, value] of Object.entries(defaultSettings)) {
+        await setSetting(key, value);
+      }
+    }
+    
+    sendResponse({ success: true });
+  } catch (error) {
+    console.error('Error clearing data:', error);
+    sendResponse({ success: false, error: error.message });
+  }
+};
+
+// Cleanup old sessions (run daily)
+chrome.alarms.create('cleanup', { periodInMinutes: 24 * 60 });
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === 'cleanup') {
+    await cleanupOldSessions();
   }
 });
 
-const checkNudges = async () => {
-  // Check if user has exceeded daily limits
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
+const cleanupOldSessions = async () => {
+  if (!db) await initDB();
   
-  const logs = await getTimeLogs(today.getTime(), tomorrow.getTime());
-  const aggregates = aggregateTimeLogs(logs);
-  
-  // Example: Check if social media time exceeds 2 hours (7200000 ms)
-  if (aggregates.byCategory.social > 7200000) {
-    chrome.notifications.create({
-      type: 'basic',
-      iconUrl: 'icons/icon48.png',
-      title: 'Conscious Media',
-      message: 'You\'ve spent over 2 hours on social media today. Consider taking a break!',
-    });
+  try {
+    const oneYearAgo = Date.now() - (365 * 24 * 60 * 60 * 1000);
+    const tx = db.transaction('sessions', 'readwrite');
+    const store = tx.objectStore('sessions');
+    const index = store.index('startTime');
+    
+    const oldSessions = await index.getAll(IDBKeyRange.upperBound(oneYearAgo));
+    
+    for (const session of oldSessions) {
+      await store.delete(session.sessionId);
+    }
+    
+    await tx.done;
+    
+    console.log(`Cleaned up ${oldSessions.length} old sessions`);
+  } catch (error) {
+    console.error('Error cleaning up old sessions:', error);
   }
 };
 
+// Handle extension shutdown
+chrome.runtime.onSuspend.addListener(async () => {
+  await endSession();
+});

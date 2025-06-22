@@ -3,45 +3,83 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Conscious Media</title>
+  <title>conscious</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <div class="popup-container">
     <div class="header">
       <div class="logo">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 2L2 7v10c0 5.55 3.84 9.74 9 11 5.16-1.26 9-5.45 9-11V7l-10-5z"/>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
         </svg>
-        <span class="logo-text">MM</span>
+        <span class="logo-text">conscious</span>
       </div>
-      <button class="settings-btn" id="settingsBtn">
+      <button class="settings-btn" id="settingsBtn" title="Settings">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
           <path d="M12 15.5A3.5 3.5 0 0 1 8.5 12A3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.53c.04-.32.07-.64.07-.97 0-.33-.03-.66-.07-1l2.11-1.63c.19-.15.24-.42.12-.64l-2-3.46c-.12-.22-.39-.31-.61-.22l-2.49 1c-.52-.39-1.06-.73-1.69-.98l-.37-2.65A.506.506 0 0 0 14 2h-4c-.25 0-.46.18-.5.42l-.37 2.65c-.63.25-1.17.59-1.69.98l-2.49-1c-.22-.09-.49 0-.61.22l-2 3.46c-.13.22-.07.49.12.64L4.57 11c-.04.34-.07.67-.07 1 0 .33.03.65.07.97l-2.11 1.66c-.19.15-.25.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1.01c.52.4 1.06.74 1.69.99l.37 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.37-2.65c.63-.26 1.17-.59 1.69-.99l2.49 1.01c.22.08.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.66Z"/>
         </svg>
       </button>
     </div>
     
-    <div class="time-today">
-      <div class="time-value" id="timeValue">0h 0m</div>
-      <div class="time-label">Today</div>
+    <div class="session-info" id="sessionInfo">
+      <div class="no-session" id="noSession">
+        <div class="status-icon">⏸️</div>
+        <div class="status-text">No active session</div>
+        <div class="status-subtitle">Visit a social media site to start tracking</div>
+      </div>
+      
+      <div class="active-session" id="activeSession" style="display: none;">
+        <div class="site-info">
+          <div class="site-icon" id="siteIcon">🌐</div>
+          <div class="site-details">
+            <div class="site-name" id="siteName">Loading...</div>
+            <div class="activity-status" id="activityStatus">
+              <span class="status-dot" id="statusDot"></span>
+              <span id="statusText">Active</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="timer-display">
+          <div class="main-timer" id="mainTimer">00:00:00</div>
+          <div class="timer-breakdown">
+            <div class="timer-item">
+              <span class="timer-label">Active:</span>
+              <span class="timer-value" id="activeTimer">00:00:00</span>
+            </div>
+            <div class="timer-item">
+              <span class="timer-label">Idle:</span>
+              <span class="timer-value" id="idleTimer">00:00:00</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="focus-ratio">
+          <div class="focus-bar">
+            <div class="focus-fill" id="focusFill"></div>
+          </div>
+          <div class="focus-percentage" id="focusPercentage">0%</div>
+        </div>
+      </div>
     </div>
     
-    <div class="site-breakdown" id="siteBreakdown">
-      <!-- Sites will be populated by JavaScript -->
-    </div>
-    
-    <div class="nudge-banner" id="nudgeBanner" style="display: none;">
-      <div class="nudge-message" id="nudgeMessage"></div>
-      <button class="nudge-dismiss" id="nudgeDismiss">×</button>
-    </div>
-    
-    <div class="footer">
-      <button class="dashboard-link" id="dashboardBtn">See Weekly →</button>
+    <div class="quick-actions">
+      <button class="action-btn" id="dashboardBtn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/>
+        </svg>
+        Dashboard
+      </button>
+      <button class="action-btn" id="exportBtn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M14,2H6A2,2 0 0,0 4,4V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V8L14,2M18,20H6V4H13V9H18V20Z"/>
+        </svg>
+        Export
+      </button>
     </div>
   </div>
   
   <script src="popup.js"></script>
 </body>
 </html>
-

@@ -1,34 +1,51 @@
 {
-  "name": "conscious-media-extension",
-  "version": "1.0.0",
-  "description": "A sleek, minimalist, dark-themed Chrome extension that drives conscious media consumption",
-  "main": "index.js",
-  "directories": {
-    "doc": "docs"
-  },
+  "name": "conscious-extension",
+  "version": "1.1.0",
+  "description": "Track your social media usage and focus levels in real-time with granular analytics",
+  "main": "src/background/background.js",
   "scripts": {
     "build": "npm run clean && npm run copy-files",
-    "copy-files": "cp manifest.json dist/ && cp -r icons dist/ && cp -r src/background dist/src/ && cp -r src/content dist/src/ && cp -r src/popup dist/ && cp -r src/dashboard dist/",
-    "dev": "npm run build",
-    "test": "echo 'Tests would run here - skipping for production build'",
-    "test:manual": "echo 'Manual testing required for Chrome extension'",
-    "lint": "echo 'Linting skipped for production build'",
+    "copy-files": "cp manifest.json dist/ && cp -r icons dist/ && cp -r src dist/",
+    "dev": "npm run build && npm run watch",
+    "watch": "chokidar 'src/**/*' 'manifest.json' -c 'npm run copy-files'",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
     "package": "npm run build && npm run zip",
-    "zip": "cd dist && zip -r ../conscious-media-extension.zip .",
+    "zip": "cd dist && zip -r ../conscious-extension.zip .",
     "clean": "rm -rf dist && mkdir -p dist"
   },
   "keywords": [
     "chrome-extension",
-    "media-consumption",
     "time-tracking",
+    "social-media",
+    "focus",
     "productivity",
-    "focus"
+    "analytics"
   ],
-  "author": "Manus AI",
+  "author": "conscious team",
   "license": "MIT",
   "dependencies": {
     "idb-keyval": "^6.2.1",
     "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.23.0",
+    "@babel/preset-env": "^7.23.0",
+    "@babel/preset-react": "^7.22.0",
+    "@testing-library/jest-dom": "^6.1.0",
+    "@testing-library/dom": "^9.3.0",
+    "chokidar-cli": "^3.0.0",
+    "eslint": "^8.50.0",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "jsdom",
+    "setupFilesAfterEnv": ["<rootDir>/src/setupTests.js"],
+    "moduleNameMapping": {
+      "^@/(.*)$": "<rootDir>/src/$1"
+    }
   }
 }
-
