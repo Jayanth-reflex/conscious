@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "ConsciousTab",
+  "version": "0.0.1",
+  "description": "Track your active time on websites with conscious awareness",
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "storage",
+    "notifications",
+    "idle",
+    "alarms",
+    "scripting"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "ConsciousTab"
+  },
+  "options_page": "src/options/options.html",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/lib/*", "src/options/chart.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

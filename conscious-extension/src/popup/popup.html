@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ConsciousTab</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>ConsciousTab</h1>
+        </header>
+        
+        <section id="active-session">
+            <h2>Active Session</h2>
+            <div id="timer" class="timer">00:00:00</div>
+            <div id="status" class="status">Idle</div>
+            <div id="current-domain" class="domain"></div>
+        </section>
+        
+        <section id="daily-summary">
+            <h2>Today's Summary</h2>
+            <div id="summary" class="summary">
+                <div class="summary-item">
+                    <span class="label">Total:</span>
+                    <span id="total-time" class="time">00:00:00</span>
+                </div>
+                <div class="summary-item">
+                    <span class="label">Active:</span>
+                    <span id="active-time" class="time">00:00:00</span>
+                </div>
+            </div>
+        </section>
+        
+        <section id="actions">
+            <button id="dashboard-btn" class="btn btn-primary">Dashboard</button>
+            <button id="export-btn" class="btn btn-secondary">Export</button>
+            <button id="settings-btn" class="btn btn-secondary">Settings</button>
+        </section>
+    </div>
+    
+    <script src="../../popup/popup.js"></script>
+</body>
+</html>
